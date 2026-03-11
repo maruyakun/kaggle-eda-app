@@ -44,24 +44,21 @@ if raw_df is not None:
     current_rows = len(df)
     
     st.sidebar.markdown(f"**現在表示中の行数 / 元の総行数**\n\n{current_rows:,} / {original_rows:,} 行")
+    
+    # === 1. アラートの自動表示 ===
+    high_missing_cols = [col for col in df.columns if df[col].isnull().mean() >= 0.5]
+    zero_var_cols = [col for col in df.columns if df[col].nunique() == 1]
+    
+    if high_missing_cols or zero_var_cols:
+        st.subheader("データ品質アラート")
+        if high_missing_cols:
+            st.warning(f"欠損値が50%以上含まれるカラム: {', '.join(high_missing_cols)}")
+        if zero_var_cols:
+            st.info(f"値が1種類しか存在しない（分散がゼロの）カラム: {', '.join(zero_var_cols)}")
+            
     st.subheader(f"{selected_option} - プレビュー (先頭10行)")
     st.dataframe(df.head(10))
     
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("基本統計量")
-        st.dataframe(df.describe())
-        
-    with col2:
-        st.subheader("欠損値の数")
-        missing_count = df.isnull().sum()
-        missing_df = pd.DataFrame({
-            "欠損数": missing_count,
-            "欠損率(%)": (missing_count / len(df)) * 100
-        })
-        st.dataframe(missing_df)
-
     st.markdown("---")
     
     # データ型実質判定関数を追加 (閾値を10に変更)
@@ -70,11 +67,96 @@ if raw_df is not None:
             return True
         return series.nunique() <= max_unique
 
-    # タブの作成
-    tab1, tab2, tab3 = st.tabs(["🎯 目的変数(Target)分析", "⚖ Train/Test分布比較", "📊 単変量解析(全特徴量)"])
+    # === 2. タブの順番変更 (指定の論理順に再配置) ===
+    tabs = st.tabs([
+        "📊 データ品質と基礎統計", 
+        "📈 単変量解析(全特徴量)",
+        "🔗 相関分析", 
+        "🎯 目的変数(Target)分析", 
+        "⚖ Train/Test分布比較"
+    ])
+    tab_quality, tab_univariate, tab_corr, tab_target, tab_compare = tabs
     
-    # === タブ1: 目的変数（Target）分析 ===
-    with tab1:
+    # === 1. データ品質と基礎統計 ===
+    with tab_quality:
+        st.subheader("データ品質と基礎統計 (Data Quality & Stats)")
+        
+        col_q1, col_q2 = st.columns(2)
+        with col_q1:
+            st.write("#### 数値カラムの基礎統計量")
+            st.dataframe(df.describe())
+            
+        with col_q2:
+            st.write("#### 全カラムの欠損値割合")
+            missing_rate = (df.isnull().sum() / len(df)) * 100
+            missing_rate = missing_rate[missing_rate > 0].sort_values(ascending=False)
+            
+            if not missing_rate.empty:
+                fig, ax = plt.subplots(figsize=(6, max(4, len(missing_rate) * 0.4)))
+                sns.barplot(x=missing_rate.values, y=missing_rate.index, ax=ax, palette="viridis")
+                ax.set_xlabel("Missing Rate (%)")
+                ax.set_ylabel("Features")
+                ax.set_title("Missing Rate per Feature")
+                st.pyplot(fig)
+            else:
+                st.success("欠損値を含むカラムはありません。")
+
+    # === 2. 単変量解析（全特徴量） ===
+    with tab_univariate:
+        st.subheader("単変量解析（全特徴量）")
+        all_cols = df.columns.tolist()
+        
+        if len(all_cols) > 0:
+            st.info(f"全 {len(all_cols)} 個の特徴量を自動でグリッド表示しています。")
+            
+            # 一括展開トグルを追加
+            expand_all_uni = st.toggle("全てのグラフを展開して表示", value=False, key="toggle_uni")
+            
+            # 見やすくするために3列のグリッドで表示
+            cols_per_row = 3
+            for i in range(0, len(all_cols), cols_per_row):
+                cols = st.columns(cols_per_row)
+                for j in range(cols_per_row):
+                    idx = i + j
+                    if idx < len(all_cols):
+                        col_name = all_cols[idx]
+                        with cols[j]:
+                            # トグルの状態を expanded 引数に連動
+                            with st.expander(f"{col_name} の分布", expanded=expand_all_uni):
+                                fig, ax = plt.subplots(figsize=(5, 4))
+                                if not is_categorical(df[col_name]):
+                                    sns.histplot(df[col_name].dropna(), kde=True, ax=ax, color="teal")
+                                    ax.set_title(col_name)
+                                else:
+                                    order = df[col_name].value_counts().index[:10]
+                                    sns.countplot(data=df, x=col_name, ax=ax, color="mediumpurple", order=order)
+                                    ax.tick_params(axis='x', rotation=45)
+                                    if len(df[col_name].dropna().unique()) > 10:
+                                        ax.set_title(f"{col_name} (Top 10)")
+                                    else:
+                                        ax.set_title(col_name)
+                                    
+                                ax.set_xlabel("")
+                                ax.set_ylabel("")
+                                st.pyplot(fig)
+        else:
+            st.warning("このデータセットにはカラムがありません。")
+
+    # === 3. 相関分析 ===
+    with tab_corr:
+        st.subheader("相関分析 (Correlation)")
+        num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        if len(num_cols) > 1:
+            fig, ax = plt.subplots(figsize=(10, 8))
+            corr = df[num_cols].corr()
+            sns.heatmap(corr, annot=True, cmap="coolwarm", center=0, vmin=-1, vmax=1, ax=ax, fmt=".2f")
+            ax.set_title("Correlation Heatmap")
+            st.pyplot(fig)
+        else:
+            st.info("相関行列を計算するための数値カラムが不足しています。")
+
+    # === 4. 目的変数（Target）分析 ===
+    with tab_target:
         st.subheader("目的変数（Target）との関係性分析")
         target_col = st.selectbox("目的変数（Target）を選択してください", df.columns.tolist(), key="tab1_target")
         
@@ -89,37 +171,41 @@ if raw_df is not None:
             
         candidate_features = [c for c in candidate_features if c != target_col]
         
+        # 目的変数が数値で比較対象も数値の場合、相関係数（絶対値）で降順ソート
+        if not target_is_cat and feature_type_tab1 == "数値カラム" and len(candidate_features) > 0:
+            corrs = df[[target_col] + candidate_features].corr()[target_col].drop(target_col).abs()
+            candidate_features = corrs.sort_values(ascending=False).index.tolist()
+            
         if len(candidate_features) > 0:
-            if st.button("関係性を一括可視化", key="target_btn"):
-                st.info(f"{target_col} と {feature_type_tab1} の全特徴量（{len(candidate_features)}個）の関係を描画します。")
-                
-                cols_per_row = 2
-                for i in range(0, len(candidate_features), cols_per_row):
-                    cols = st.columns(cols_per_row)
-                    for j in range(cols_per_row):
-                        idx = i + j
-                        if idx < len(candidate_features):
-                            feature_col = candidate_features[idx]
-                            with cols[j]:
+            st.info(f"{target_col} と {feature_type_tab1} の全特徴量（{len(candidate_features)}個）の関係を描画します。")
+            
+            # 一括展開トグルを追加
+            expand_all_target = st.toggle("全てのグラフを展開して表示", value=False, key="toggle_target")
+            
+            cols_per_row = 2
+            for i in range(0, len(candidate_features), cols_per_row):
+                cols = st.columns(cols_per_row)
+                for j in range(cols_per_row):
+                    idx = i + j
+                    if idx < len(candidate_features):
+                        feature_col = candidate_features[idx]
+                        with cols[j]:
+                            # トグルの状態を expanded 引数に連動
+                            with st.expander(f"{feature_col} の分布", expanded=expand_all_target):
                                 fig, ax = plt.subplots(figsize=(6, 4))
                                 feature_is_cat = is_categorical(df[feature_col])
                                 try:
                                     if not target_is_cat and not feature_is_cat:
-                                        # 両方数値: 散布図
                                         sns.scatterplot(data=df, x=feature_col, y=target_col, ax=ax, alpha=0.5)
                                         ax.set_title(f"{target_col} vs {feature_col} (Scatter)")
                                     elif not target_is_cat and feature_is_cat:
-                                        # Target数値, Featureカテゴリ: 箱ひげ図
                                         sns.boxplot(data=df, x=feature_col, y=target_col, ax=ax)
                                         ax.set_title(f"{target_col} by {feature_col} (Box Plot)")
                                         ax.tick_params(axis='x', rotation=45)
                                     elif target_is_cat and not feature_is_cat:
-                                        # Targetカテゴリ, Feature数値: 箱ひげ図
                                         sns.boxplot(data=df, x=target_col, y=feature_col, ax=ax)
                                         ax.set_title(f"{feature_col} dist by {target_col} (Box Plot)")
                                     else:
-                                        # 両方カテゴリまたは実質カテゴリ: カウントプロット (hue=target_col)
-                                        # カテゴリ数が多い場合はトップ10のみ表示
                                         order = df[feature_col].value_counts().index[:10]
                                         sns.countplot(data=df, x=feature_col, hue=target_col, ax=ax, order=order)
                                         ax.set_title(f"{feature_col} counts by {target_col}")
@@ -130,8 +216,8 @@ if raw_df is not None:
         else:
             st.info(f"選択可能な{feature_type_tab1}がありません。")
 
-    # === タブ2: TrainとTestの分布比較 ===
-    with tab2:
+    # === 5. TrainとTestの分布比較 ===
+    with tab_compare:
         st.subheader("Train/Test データ分布の比較 (Covariate Shift)")
         raw_train_df = load_data("train.csv")
         raw_test_df = load_data("test.csv")
@@ -153,15 +239,20 @@ if raw_df is not None:
                 
                 if len(valid_cols) > 0:
                     st.info(f"共通する {comp_type}（{len(valid_cols)}個）の分布比較を一括表示します。")
-                    if st.button("分布比較を一括可視化", key="compare_btn"):
-                        cols_per_row = 2
-                        for i in range(0, len(valid_cols), cols_per_row):
-                            cols = st.columns(cols_per_row)
-                            for j in range(cols_per_row):
-                                idx = i + j
-                                if idx < len(valid_cols):
-                                    selected_compare_col = valid_cols[idx]
-                                    with cols[j]:
+                    
+                    # 一括展開トグルを追加
+                    expand_all_compare = st.toggle("全てのグラフを展開して表示", value=False, key="toggle_compare")
+                    
+                    cols_per_row = 2
+                    for i in range(0, len(valid_cols), cols_per_row):
+                        cols = st.columns(cols_per_row)
+                        for j in range(cols_per_row):
+                            idx = i + j
+                            if idx < len(valid_cols):
+                                selected_compare_col = valid_cols[idx]
+                                with cols[j]:
+                                    # トグルの状態を expanded 引数に連動
+                                    with st.expander(f"{selected_compare_col} の分布", expanded=expand_all_compare):
                                         fig, ax = plt.subplots(figsize=(6, 4))
                                         
                                         if comp_type == "数値カラム":
@@ -169,7 +260,6 @@ if raw_df is not None:
                                             sns.histplot(data=test_df, x=selected_compare_col, color="orange", label="Test", kde=True, stat="density", common_norm=False, alpha=0.3, ax=ax)
                                             ax.set_title(f"Train vs Test Dist for {selected_compare_col}")
                                         else:
-                                            # Categorical countplot stacked or grouped
                                             concat_df = pd.concat([
                                                 train_df[[selected_compare_col]].assign(Dataset="Train"),
                                                 test_df[[selected_compare_col]].assign(Dataset="Test")
@@ -193,41 +283,5 @@ if raw_df is not None:
             if test_df is None:
                 st.error("同階層に `test.csv` が見つからないため、比較できません。")
                 
-    # === タブ3: 単変量解析（全特徴量） ===
-    with tab3:
-        st.subheader("単変量解析（全特徴量）")
-        all_cols = df.columns.tolist()
-        
-        if len(all_cols) > 0:
-            st.info(f"全 {len(all_cols)} 個の特徴量を自動でグリッド表示しています。")
-            
-            # 見やすくするために3列のグリッドで表示
-            cols_per_row = 3
-            for i in range(0, len(all_cols), cols_per_row):
-                cols = st.columns(cols_per_row)
-                for j in range(cols_per_row):
-                    idx = i + j
-                    if idx < len(all_cols):
-                        col_name = all_cols[idx]
-                        with cols[j]:
-                            fig, ax = plt.subplots(figsize=(5, 4))
-                            if not is_categorical(df[col_name]):
-                                sns.histplot(df[col_name].dropna(), kde=True, ax=ax, color="teal")
-                                ax.set_title(col_name)
-                            else:
-                                # カテゴリが多すぎる場合を考慮し、トップ10件のみ表示
-                                order = df[col_name].value_counts().index[:10]
-                                sns.countplot(data=df, x=col_name, ax=ax, color="mediumpurple", order=order)
-                                ax.tick_params(axis='x', rotation=45)
-                                if len(df[col_name].dropna().unique()) > 10:
-                                    ax.set_title(f"{col_name} (Top 10)")
-                                else:
-                                    ax.set_title(col_name)
-                                
-                            ax.set_xlabel("")
-                            ax.set_ylabel("")
-                            st.pyplot(fig)
-        else:
-            st.warning("このデータセットにはカラムがありません。")
 else:
     st.error(f"{selected_file} が見つかりませんでした。Kaggleのデータセットが同じフォルダに存在するか確認してください。")
