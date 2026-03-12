@@ -16,8 +16,8 @@ st.title("Kaggle Data EDA App")
 st.sidebar.header("データ選択")
 # submission.csvは実際のファイル名であるsample_submission.csvにマッピングします
 file_options = {
-    "Train Data": "train.csv",
-    "Test Data": "test.csv",
+    "Train Data": "https://uholddjjjwpuvmvrzylz.supabase.co/storage/v1/object/public/kaggle-data/train.parquet",
+    "Test Data": "https://uholddjjjwpuvmvrzylz.supabase.co/storage/v1/object/public/kaggle-data/test.parquet",
     "Submission Data": "sample_submission.csv"
 }
 selected_option = st.sidebar.selectbox("読み込むファイルを選択してください", list(file_options.keys()))
@@ -31,8 +31,11 @@ sample_frac = st.sidebar.slider("サンプリング割合 (%)", min_value=1, max
 @st.cache_data
 def load_data(filename):
     try:
-        return pd.read_csv(filename)
-    except FileNotFoundError:
+        if str(filename).endswith(".parquet") or ".parquet" in str(filename):
+            return pd.read_parquet(filename)
+        else:
+            return pd.read_csv(filename)
+    except Exception:
         return None
 
 raw_df = load_data(selected_file)
@@ -219,8 +222,8 @@ if raw_df is not None:
     # === 5. TrainとTestの分布比較 ===
     with tab_compare:
         st.subheader("Train/Test データ分布の比較 (Covariate Shift)")
-        raw_train_df = load_data("train.csv")
-        raw_test_df = load_data("test.csv")
+        raw_train_df = load_data(file_options["Train Data"])
+        raw_test_df = load_data(file_options["Test Data"])
         
         if raw_train_df is not None and raw_test_df is not None:
             train_df = raw_train_df.sample(frac=sample_frac / 100.0, random_state=42)
@@ -279,9 +282,9 @@ if raw_df is not None:
                 st.warning("TrainとTestに共通するカラムがありません。")
         else:
             if train_df is None:
-                st.error("同階層に `train.csv` が見つからないため、比較できません。")
+                st.error("Trainデータの読み込みに失敗したため、比較できません。")
             if test_df is None:
-                st.error("同階層に `test.csv` が見つからないため、比較できません。")
+                st.error("Testデータの読み込みに失敗したため、比較できません。")
                 
 else:
-    st.error(f"{selected_file} が見つかりませんでした。Kaggleのデータセットが同じフォルダに存在するか確認してください。")
+    st.error(f"{selected_file} の読み込みに失敗しました。データが存在するか、URLが正しいか確認してください。")
