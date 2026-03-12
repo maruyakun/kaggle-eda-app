@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import plotly.figure_factory as ff
 
 # 日本語フォントなどのワーニング対策
 sns.set_theme(style="whitegrid")
@@ -256,13 +257,31 @@ if raw_df is not None:
                                 with cols[j]:
                                     # トグルの状態を expanded 引数に連動
                                     with st.expander(f"{selected_compare_col} の分布", expanded=expand_all_compare):
-                                        fig, ax = plt.subplots(figsize=(6, 4))
-                                        
                                         if comp_type == "数値カラム":
-                                            sns.histplot(data=train_df, x=selected_compare_col, color="blue", label="Train", kde=True, stat="density", common_norm=False, alpha=0.3, ax=ax)
-                                            sns.histplot(data=test_df, x=selected_compare_col, color="orange", label="Test", kde=True, stat="density", common_norm=False, alpha=0.3, ax=ax)
-                                            ax.set_title(f"Train vs Test Dist for {selected_compare_col}")
+                                            # エラー防止のため、欠損値（NaN）を事前に除外
+                                            train_data = train_df[selected_compare_col].dropna()
+                                            test_data = test_df[selected_compare_col].dropna()
+                                            
+                                            if len(train_data) > 1 and len(test_data) > 1:
+                                                # Plotlyのfigure_factoryを使ってKDEとヒストグラム（確率密度）を描画
+                                                fig_plotly = ff.create_distplot(
+                                                    [train_data, test_data],
+                                                    group_labels=['Train', 'Test'],
+                                                    show_hist=True,
+                                                    show_rug=False,
+                                                    colors=['#1f77b4', '#ff7f0e']
+                                                )
+                                                fig_plotly.update_layout(
+                                                    title_text=f"Train vs Test Dist for {selected_compare_col}",
+                                                    barmode='overlay',
+                                                    margin=dict(l=20, r=20, t=40, b=20)
+                                                )
+                                                st.plotly_chart(fig_plotly, use_container_width=True)
+                                            else:
+                                                st.warning(f"「{selected_compare_col}」には分布を描画するのに十分なデータがありません。")
                                         else:
+                                            # カテゴリカラムの場合は従来のSeaborn描画を維持
+                                            fig, ax = plt.subplots(figsize=(6, 4))
                                             concat_df = pd.concat([
                                                 train_df[[selected_compare_col]].assign(Dataset="Train"),
                                                 test_df[[selected_compare_col]].assign(Dataset="Test")
@@ -273,9 +292,9 @@ if raw_df is not None:
                                             sns.countplot(data=concat_df, x=selected_compare_col, hue="Dataset", palette={"Train": "blue", "Test": "orange"}, alpha=0.7, ax=ax)
                                             ax.set_title(f"Train vs Test Count for {selected_compare_col}")
                                             ax.tick_params(axis='x', rotation=45)
-                                        
-                                        ax.legend()
-                                        st.pyplot(fig)
+                                            
+                                            ax.legend()
+                                            st.pyplot(fig)
                 else:
                     st.info(f"共通する{comp_type}がありません。")
             else:
