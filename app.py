@@ -180,31 +180,42 @@ if raw_df is not None:
     with tab_corr:
         st.subheader("相関分析 (Correlation)")
         
-        # セレクトボックスで目的変数を指定（選択しないことも可能）
-        all_cols_with_none = ["None"] + df.columns.tolist()
-        corr_target = st.selectbox("相関を確認したい目的変数（任意）", all_cols_with_none, key="corr_target_select")
+        col_c1, col_c2 = st.columns(2)
+        # 1. 除外カラム選択機能の追加
+        with col_c1:
+            exclude_cols = st.multiselect(
+                "除外するカラムを選択（例: ID等）", 
+                df.columns.tolist(),
+                key="corr_exclude_select"
+            )
+            
+        with col_c2:
+            # セレクトボックスで目的変数を指定（選択しないことも可能）
+            all_cols_with_none = ["None"] + [c for c in df.columns if c not in exclude_cols]
+            corr_target = st.selectbox("相関を確認したい目的変数（任意）", all_cols_with_none, key="corr_target_select")
         
-        # 1. 元から数値型であるカラムのみを抽出
-        num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        # 2. 計算対象を「数値カラム」に限定 (除外カラムを反映)
+        target_df = df.drop(columns=exclude_cols)
+        num_cols = target_df.select_dtypes(include=[np.number]).columns.tolist()
         
         # 相関計算用のDataFrameを作成
-        corr_df = df[num_cols].copy()
+        corr_df = target_df[num_cols].copy()
         
-        # 2. 目的変数が選択されており、かつカテゴリ型（文字列等）の場合、一時的に数値化して追加
-        if corr_target != "None" and corr_target in df.columns and corr_target not in num_cols:
-            unique_vals = df[corr_target].dropna().unique()
+        # 3. 目的変数（Target）の安全な自動エンコーディング
+        if corr_target != "None" and corr_target in target_df.columns and corr_target not in num_cols:
+            unique_vals = target_df[corr_target].dropna().unique()
             if len(unique_vals) == 2:
-                # 2値なら0/1に変換して追加
-                sorted_vals = sorted(unique_vals, key=str)
-                mapping = {sorted_vals[1]: 1, sorted_vals[0]: 0}
-                corr_df[corr_target] = df[corr_target].map(mapping)
-                st.info(f"「{corr_target}」は2値のカテゴリ変数のため、相関計算用に数値（1/0）に一時変換して含めました。")
+                # 2値ならpd.factorizeで安全に0/1に変換して追加
+                try:
+                    corr_df[corr_target], _ = pd.factorize(target_df[corr_target])
+                    st.info(f"「{corr_target}」は2値のカテゴリ変数のため、相関計算用に数値（1/0）に一時変換して含めました。")
+                except Exception as e:
+                    st.warning(f"「{corr_target}」のエンコーディング中にエラーが発生したため、相関行列からは除外されます: {e}")
             else:
-                # 3値以上の場合は、pd.factorizeなどで数値化するか除外するかだが、シンプルに除外
                 st.warning(f"「{corr_target}」は3種類以上の値を持つカテゴリ変数のため、相関行列からは除外されます。")
         
         if len(corr_df.columns) > 1:
-            fig, ax = plt.subplots(figsize=(10, 8))
+            fig, ax = plt.subplots(figsize=(10, max(6, len(corr_df.columns) * 0.4)))
             corr = corr_df.corr()
             sns.heatmap(corr, annot=True, cmap="coolwarm", center=0, vmin=-1, vmax=1, ax=ax, fmt=".2f")
             ax.set_title("Correlation Heatmap")
