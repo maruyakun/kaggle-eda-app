@@ -40,7 +40,35 @@ def load_data(filename):
     except Exception:
         return None
 
-raw_df = load_data(selected_file)
+@st.cache_data
+def encode_binary_features(df):
+    if df is None:
+        return None
+    df_encoded = df.copy()
+    for col in df_encoded.columns:
+        # object または category 型の場合
+        if df_encoded[col].dtype == 'object' or isinstance(df_encoded[col].dtype, pd.CategoricalDtype):
+            unique_vals = df_encoded[col].dropna().unique()
+            if len(unique_vals) == 2:
+                # 文字列の小文字をキー、元の値をバリューとする辞書
+                val_lower = {str(v).lower(): v for v in unique_vals}
+                
+                if set(val_lower.keys()) == {'yes', 'no'}:
+                    mapping = {val_lower['yes']: 1, val_lower['no']: 0}
+                elif set(val_lower.keys()) == {'true', 'false'}:
+                    mapping = {val_lower['true']: 1, val_lower['false']: 0}
+                elif set(val_lower.keys()) == {'y', 'n'}:
+                    mapping = {val_lower['y']: 1, val_lower['n']: 0}
+                else:
+                    # それ以外の任意の2値は、文字としてソートして1, 0に割り当て
+                    sorted_vals = sorted(unique_vals, key=str)
+                    mapping = {sorted_vals[1]: 1, sorted_vals[0]: 0}
+                
+                df_encoded[col] = df_encoded[col].map(mapping)
+    return df_encoded
+
+# データロードと自動エンコーディング
+raw_df = encode_binary_features(load_data(selected_file))
 
 if raw_df is not None:
     original_rows = len(raw_df)
