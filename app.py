@@ -77,10 +77,11 @@ if raw_df is not None:
         "📊 データ品質と基礎統計", 
         "📈 単変量解析(全特徴量)",
         "🔗 相関分析", 
-        "🎯 目的変数(Target)分析", 
-        "⚖ Train/Test分布比較"
+        "🎯 ターゲット分析", 
+        "⚖ Train/Test分布比較",
+        "🧮 動的クロス集計(ピボット)"
     ])
-    tab_quality, tab_univariate, tab_corr, tab_target, tab_compare = tabs
+    tab_quality, tab_univariate, tab_corr, tab_target, tab_compare, tab_pivot = tabs
     
     # === 1. データ品質と基礎統計 ===
     with tab_quality:
@@ -160,66 +161,73 @@ if raw_df is not None:
         else:
             st.info("相関行列を計算するための数値カラムが不足しています。")
 
-    # === 4. 目的変数（Target）分析 ===
+    # === 4. ターゲット分析 ===
     with tab_target:
-        st.subheader("目的変数（Target）との関係性分析")
-        target_col = st.selectbox("目的変数（Target）を選択してください", df.columns.tolist(), key="tab1_target")
+        st.subheader("ターゲット分析 (Target Analysis)")
+        target_col = st.selectbox("目的変数（Target）を選択してください", df.columns.tolist(), key="target_col_select")
         
         target_is_cat = is_categorical(df[target_col])
         
-        feature_type_tab1 = st.radio("比較する特徴量のデータ型を選択", ["数値カラム", "カテゴリカラム"], key="tab1_radio")
+        categorical_features = [c for c in df.columns if is_categorical(df[c]) and c != target_col]
         
-        if feature_type_tab1 == "数値カラム":
-            candidate_features = [c for c in df.columns if not is_categorical(df[c])]
+        if len(categorical_features) == 0:
+            st.warning("比較対象となるカテゴリ変数が存在しません。")
         else:
-            candidate_features = [c for c in df.columns if is_categorical(df[c])]
+            feature_col = st.selectbox("比較するカテゴリ変数を選択してください", categorical_features, key="target_feature_select")
             
-        candidate_features = [c for c in candidate_features if c != target_col]
-        
-        # 目的変数が数値で比較対象も数値の場合、相関係数（絶対値）で降順ソート
-        if not target_is_cat and feature_type_tab1 == "数値カラム" and len(candidate_features) > 0:
-            corrs = df[[target_col] + candidate_features].corr()[target_col].drop(target_col).abs()
-            candidate_features = corrs.sort_values(ascending=False).index.tolist()
+            clean_df = df[[target_col, feature_col]].dropna()
             
-        if len(candidate_features) > 0:
-            st.info(f"{target_col} と {feature_type_tab1} の全特徴量（{len(candidate_features)}個）の関係を描画します。")
-            
-            # 一括展開トグルを追加
-            expand_all_target = st.toggle("全てのグラフを展開して表示", value=False, key="toggle_target")
-            
-            cols_per_row = 2
-            for i in range(0, len(candidate_features), cols_per_row):
-                cols = st.columns(cols_per_row)
-                for j in range(cols_per_row):
-                    idx = i + j
-                    if idx < len(candidate_features):
-                        feature_col = candidate_features[idx]
-                        with cols[j]:
-                            # トグルの状態を expanded 引数に連動
-                            with st.expander(f"{feature_col} の分布", expanded=expand_all_target):
-                                fig, ax = plt.subplots(figsize=(6, 4))
-                                feature_is_cat = is_categorical(df[feature_col])
-                                try:
-                                    if not target_is_cat and not feature_is_cat:
-                                        sns.scatterplot(data=df, x=feature_col, y=target_col, ax=ax, alpha=0.5)
-                                        ax.set_title(f"{target_col} vs {feature_col} (Scatter)")
-                                    elif not target_is_cat and feature_is_cat:
-                                        sns.boxplot(data=df, x=feature_col, y=target_col, ax=ax)
-                                        ax.set_title(f"{target_col} by {feature_col} (Box Plot)")
-                                        ax.tick_params(axis='x', rotation=45)
-                                    elif target_is_cat and not feature_is_cat:
-                                        sns.boxplot(data=df, x=target_col, y=feature_col, ax=ax)
-                                        ax.set_title(f"{feature_col} dist by {target_col} (Box Plot)")
-                                    else:
-                                        order = df[feature_col].value_counts().index[:10]
-                                        sns.countplot(data=df, x=feature_col, hue=target_col, ax=ax, order=order)
-                                        ax.set_title(f"{feature_col} counts by {target_col}")
-                                        ax.tick_params(axis='x', rotation=45)
-                                    st.pyplot(fig)
-                                except Exception as e:
-                                    st.warning(f"「{feature_col}」の描画中にエラーが発生しました: {e}")
-        else:
-            st.info(f"選択可能な{feature_type_tab1}がありません。")
+            if len(clean_df) == 0:
+                st.warning("有効なデータがありません（欠損値を除外した結果0件になりました）。")
+            else:
+                if not target_is_cat:
+                    # 数値型（回帰タスク）の場合
+                    st.info(f"「{target_col}」は数値型として判定されました。カテゴリごとの平均値と分布を比較します。")
+                    
+                    # 平均値と標準偏差（エラーバー用）の計算
+                    agg_df = clean_df.groupby(feature_col)[target_col].agg(['mean', 'std']).reset_index()
+                    agg_df = agg_df.fillna(0) # stdがNaNになる場合(N=1等)の対策
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        fig_bar = px.bar(
+                            agg_df, 
+                            x=feature_col, 
+                            y='mean', 
+                            error_y='std',
+                            title=f"{target_col} の平均値 (by {feature_col})",
+                            labels={'mean': f'{target_col} Mean'},
+                            color=feature_col
+                        )
+                        fig_bar.update_layout(showlegend=False)
+                        st.plotly_chart(fig_bar, use_container_width=True)
+                    
+                    with col2:
+                        fig_box = px.box(
+                            clean_df, 
+                            x=feature_col, 
+                            y=target_col, 
+                            title=f"{target_col} の分布 (by {feature_col})",
+                            color=feature_col
+                        )
+                        fig_box.update_layout(showlegend=False)
+                        st.plotly_chart(fig_box, use_container_width=True)
+                        
+                else:
+                    # カテゴリ/二値型（分類タスク）の場合
+                    st.info(f"「{target_col}」はカテゴリ/二値型として判定されました。カテゴリごとの割合を比較します。")
+                    
+                    # 100%積み上げ棒グラフ
+                    fig_stack = px.histogram(
+                        clean_df.astype(str), # 全て文字列にしてカテゴリとして扱う
+                        x=feature_col, 
+                        color=target_col, 
+                        barmode="100%",
+                        title=f"{target_col} の割合 (by {feature_col})",
+                        labels={feature_col: feature_col, 'count': '割合'}
+                    )
+                    fig_stack.update_layout(yaxis_title="割合 (100%)", margin=dict(l=20, r=20, t=40, b=20))
+                    st.plotly_chart(fig_stack, use_container_width=True)
 
     # === 5. TrainとTestの分布比較 ===
     with tab_compare:
@@ -311,6 +319,48 @@ if raw_df is not None:
                 st.error("Trainデータの読み込みに失敗したため、比較できません。")
             if test_df is None:
                 st.error("Testデータの読み込みに失敗したため、比較できません。")
+
+    # === 6. 動的クロス集計（ピボット） ===
+    with tab_pivot:
+        st.subheader("動的クロス集計 (Dynamic Pivot Table)")
+        
+        col_p1, col_p2, col_p3, col_p4 = st.columns(4)
+        
+        all_cols_options = ["None"] + df.columns.tolist()
+        with col_p1:
+            pivot_index = st.selectbox("行 (Index)", all_cols_options, index=1 if len(all_cols_options) > 1 else 0)
+        with col_p2:
+            pivot_columns = st.selectbox("列 (Columns)", all_cols_options, index=0)
+        with col_p3:
+            pivot_values = st.selectbox("集計対象の値 (Values)", all_cols_options, index=0)
+        with col_p4:
+            pivot_aggfunc = st.selectbox("集計関数", ["count", "mean", "sum", "min", "max"], index=0)
+            
+        if pivot_index != "None":
+            try:
+                # pivot_tableの実行
+                if pivot_aggfunc == "count":
+                    if pivot_columns != "None":
+                        pivot_df = pd.crosstab(df[pivot_index], df[pivot_columns])
+                    else:
+                        pivot_df = df[pivot_index].value_counts().to_frame("count")
+                else:
+                    if pivot_values == "None":
+                        st.warning("mean, sum等の集計関数を使用する場合は「集計対象の値 (Values)」を選択してください。")
+                        pivot_df = pd.DataFrame()
+                    else:
+                        pivot_col_arg = pivot_columns if pivot_columns != "None" else None
+                        pivot_df = pd.pivot_table(df, index=pivot_index, columns=pivot_col_arg, values=pivot_values, aggfunc=pivot_aggfunc)
+                
+                if not pivot_df.empty:
+                    # 数値型に背景グラデーションを適用して表示
+                    styled_df = pivot_df.style.background_gradient(cmap="Blues", axis=None)
+                    st.dataframe(styled_df, use_container_width=True)
+                    
+            except Exception as e:
+                st.error(f"クロス集計の計算中にエラーが発生しました: {e}")
+        else:
+            st.info("少なくとも「行 (Index)」を選択してください。")
                 
 else:
     st.error(f"{selected_file} の読み込みに失敗しました。データが存在するか、URLが正しいか確認してください。")
