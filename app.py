@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import plotly.figure_factory as ff
+import plotly.express as px
 
 # 日本語フォントなどのワーニング対策
 sns.set_theme(style="whitegrid")
@@ -259,21 +260,27 @@ if raw_df is not None:
                                     with st.expander(f"{selected_compare_col} の分布", expanded=expand_all_compare):
                                         if comp_type == "数値カラム":
                                             # エラー防止のため、欠損値（NaN）を事前に除外
-                                            train_data = train_df[selected_compare_col].dropna()
-                                            test_data = test_df[selected_compare_col].dropna()
+                                            train_data = train_df[[selected_compare_col]].dropna()
+                                            test_data = test_df[[selected_compare_col]].dropna()
                                             
                                             if len(train_data) > 1 and len(test_data) > 1:
-                                                # Plotlyのfigure_factoryを使ってKDEとヒストグラム（確率密度）を描画
-                                                fig_plotly = ff.create_distplot(
-                                                    [train_data, test_data],
-                                                    group_labels=['Train', 'Test'],
-                                                    show_hist=True,
-                                                    show_rug=False,
-                                                    colors=['#1f77b4', '#ff7f0e']
+                                                # px.histogramを使ってヒストグラムのみを描画（KDEやfigure_factoryを回避し軽量化）
+                                                plot_df = pd.concat([
+                                                    train_data.assign(Dataset="Train"),
+                                                    test_data.assign(Dataset="Test")
+                                                ])
+                                                
+                                                fig_plotly = px.histogram(
+                                                    plot_df,
+                                                    x=selected_compare_col,
+                                                    color="Dataset",
+                                                    barmode="overlay",
+                                                    histnorm="probability",
+                                                    opacity=0.6,
+                                                    title=f"Train vs Test Dist for {selected_compare_col}",
+                                                    color_discrete_map={"Train": "#1f77b4", "Test": "#ff7f0e"}
                                                 )
                                                 fig_plotly.update_layout(
-                                                    title_text=f"Train vs Test Dist for {selected_compare_col}",
-                                                    barmode='overlay',
                                                     margin=dict(l=20, r=20, t=40, b=20)
                                                 )
                                                 st.plotly_chart(fig_plotly, use_container_width=True)
