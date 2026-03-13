@@ -222,7 +222,7 @@ if raw_df is not None:
                         clean_df.astype(str), # 全て文字列にしてカテゴリとして扱う
                         x=feature_col, 
                         color=target_col, 
-                        barmode="100%",
+                        barnorm="percent",
                         title=f"{target_col} の割合 (by {feature_col})",
                         labels={feature_col: feature_col, 'count': '割合'}
                     )
